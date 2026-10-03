@@ -1,0 +1,5 @@
+numpy>=1.24
+matplotlib>=3.5
+# torch + triton are installed from the cuda/linux index for GPU runs; see setup_linux.sh
+# For CPU-only correctness: pip install torch --index-url https://download.pytorch.org/whl/cpu
+pytest>=7.0
