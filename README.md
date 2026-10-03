@@ -17,11 +17,7 @@ software-pipelined two-phase KV walk (a further 1.05–1.27×) — the kernel re
 holds O(M·D) memory out to M=16384: **67 MB** where a naive implementation would
 need **~53 GB** (measured 3.3 GB → 17 MB at M=4096).
 
-See **[docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md)** for the full measured
-results tables and a log of every bug hit — including three distinct Triton 3.0
-software-pipeliner compiler crashes (found by bisection, worked around without
-giving up the optimisation) and a latent ragged-tail correctness bug caught
-during the v2 audit.
+
 
 ## Project layout
 
