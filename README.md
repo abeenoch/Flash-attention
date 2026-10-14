@@ -10,12 +10,37 @@ This is a portfolio / learning project oriented toward **LLM inference infrastru
 
 ## Results (verified on a Modal L4, fp16)
 
-33/33 correctness tests pass against the fused PyTorch SDPA reference. After two
-diagnosed optimisations — causal block-skipping (1.6–1.8×) and a
-software-pipelined two-phase KV walk (a further 1.05–1.27×) — the kernel reaches
-**66–91% of PyTorch FA2** on prefill configs (best on GQA: 91% at M=2048), and
-holds O(M·D) memory out to M=16384: **67 MB** where a naive implementation would
-need **~53 GB** (measured 3.3 GB → 17 MB at M=4096).
+33/33 correctness tests pass against the fused PyTorch SDPA reference — across
+MHA and GQA (groups 2 and 4), causal and non-causal, and non-power-of-2 head
+dims (D=80, 96).
+
+After two diagnosed optimisations — causal block-skipping (1.6–1.8×) and a
+software-pipelined two-phase KV walk (a further 1.05–1.27×) — the kernel's
+**v2 / FA2 throughput ratios, as min–max ranges over three independent L4 runs**
+(per-run tables in `docs/DEVELOPMENT_LOG.md`):
+
+| config | v2 / FA2 (3-run range) | note |
+|---|---|---|
+| GQA g4, M=2048 causal | **97–104%** | ties or beats FA2 |
+| D=64, M=2048 causal | **101–139%** | tie-or-better; margin is FA2 noise |
+| M=4096 causal | 83–88% | |
+| M=2048 causal | 70–82% | |
+| M=1024 causal | 73–79% | |
+| M=16384 causal | 65–66% | long-context (falloff vs 8k open question) |
+| M=8192 causal | 59–74% | |
+| B=16, M=2048 causal | 53–58% | batch scaling: gap is memory-bound |
+| D=256, M=2048 causal | 54–57% | wide heads: smem-capped tiles (structural) |
+| hdim96 (padded), M=512 | 48–51% | masked-lane tax (structural) |
+
+**Measurement honesty:** all numbers come from *shared* Modal L4 instances
+where both backends vary ±10–15% run-to-run and independently of each other —
+that is why results are ranges, not single ratios. A dedicated-GPU re-run and
+`ncu` profiling were planned and **retracted; no dedicated-hardware numbers
+exist.** Causal TFLOP/s use the FA-paper convention (4·B·H·M²·D) and are
+inflated ~2× vs actually-executed ops; ratios are unaffected.
+
+**Memory:** O(M·D) out to M=16384 — **67 MB** where naive needs **~53 GB**
+(3.3 GB → 17 MB at M=4096; 13.7 GB → 134 MB at B=16/M=2048).
 
 
 
@@ -28,9 +53,16 @@ attention/
   triton_kernel_pipelined.py  # v2 (production): software-pipelined, two-phase KV walk
   kernel.py         # public entry point: picks Triton on GPU, naive on CPU
 tests/
-  test_correctness.py   # pytest: triton/naive vs torch reference, many configs
+  test_correctness.py   # pytest: triton/naive vs torch reference, 33 configs
 benches/
-  bench_attention.py    # perf + memory benchmarks, writes CSV + plots
+  bench_attention.py    # perf + memory benchmarks (12 configs), writes CSV + plots
+deploy/
+  modal_run.py          # tests + bench on Modal (serverless L4/GPU)
+  ab_pipelined.py       # v1 vs v2 vs FA2 A/B tool
+  probe_autotune.py     # prints true autotune winners (TRITON_PRINT_AUTOTUNING=1)
+  runpod_setup.sh       # (optional, not run) dedicated-GPU runbook + ncu
+docs/
+  DEVELOPMENT_LOG.md    # full engineering log: bugs, diagnosis, all measurements
 setup_linux.sh       # one-command env setup for a Linux GPU box (RunPod / Vast)
 ```
 
@@ -86,7 +118,12 @@ the first run). Choose the GPU with `ATTN_GPU` (T4 | L4 | A10 | L40S | A100-80GB
 L4 is Ada Lovelace, the same architecture family as the RTX 4090, so tile-size
 tuning transfers between the two.
 
-## Running on RunPod (interactive / profiling)
+## Running on RunPod (optional — not used for any reported result)
+
+> **Status:** the dedicated-GPU re-run and `ncu` profiling were planned and
+> **retracted** — every number in this README comes from shared Modal L4
+> runs (see ranges above). This section is kept as a runbook for anyone who
+> wants to profile or reproduce on dedicated hardware.
 
 RunPod gives you a real pod with SSH/root, which is what you want for `ncu`/`nsys`
 profiling of the kernel:
